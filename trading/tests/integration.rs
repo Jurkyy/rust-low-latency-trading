@@ -234,10 +234,9 @@ mod order_flow_tests {
 mod order_cancellation_tests {
     use super::*;
 
-    // Note: The current order book implementation has a stub cancel_order function
-    // that always returns None (not fully implemented). These tests verify the
-    // current behavior. When cancel_order is fully implemented, these tests
-    // should be updated to expect Canceled responses.
+    // These tests verify order cancellation functionality in the matching engine.
+    // The cancel_order implementation correctly removes orders from the order book
+    // and generates appropriate responses and market updates.
 
     #[test]
     fn test_cancel_request_processing() {
@@ -257,9 +256,7 @@ mod order_cancellation_tests {
         let (new_response, _) = engine.process_request(&new_request);
         let market_order_id = new_response.market_order_id;
 
-        // Now try to cancel the order
-        // Note: Currently cancel_order returns None (not implemented),
-        // so this will result in CancelRejected
+        // Now cancel the order
         let cancel_request = ClientRequest::new(
             ClientRequestType::Cancel,
             100,
@@ -272,14 +269,17 @@ mod order_cancellation_tests {
 
         let (cancel_response, cancel_updates) = engine.process_request(&cancel_request);
 
-        // Current behavior: CancelRejected due to stub implementation
+        // Verify successful cancellation response
         let cancel_msg_type = cancel_response.msg_type;
         let cancel_client_order_id = cancel_response.client_order_id;
-        assert_eq!(cancel_msg_type, ClientResponseType::CancelRejected as u8);
+        assert_eq!(cancel_msg_type, ClientResponseType::Canceled as u8);
         assert_eq!(cancel_client_order_id, market_order_id);
 
-        // No market updates when cancel is rejected
-        assert!(cancel_updates.is_empty());
+        // Verify market update for cancellation
+        assert_eq!(cancel_updates.len(), 1);
+        let update = &cancel_updates[0];
+        let upd_msg_type = update.msg_type;
+        assert_eq!(upd_msg_type, MarketUpdateType::Cancel as u8);
     }
 
     #[test]
@@ -328,7 +328,7 @@ mod order_cancellation_tests {
     }
 
     #[test]
-    fn test_multiple_cancel_requests_all_rejected() {
+    fn test_double_cancel_second_rejected() {
         let mut engine = MatchingEngine::new();
         engine.add_ticker(1);
 
@@ -345,7 +345,7 @@ mod order_cancellation_tests {
         let (new_response, _) = engine.process_request(&new_request);
         let market_order_id = new_response.market_order_id;
 
-        // Try to cancel the order (will be rejected due to stub implementation)
+        // First cancel should succeed
         let cancel_request = ClientRequest::new(
             ClientRequestType::Cancel,
             100,
@@ -355,15 +355,20 @@ mod order_cancellation_tests {
             10050,
             0,
         );
-        let (first_cancel, _) = engine.process_request(&cancel_request);
+        let (first_cancel, first_updates) = engine.process_request(&cancel_request);
         let first_cancel_msg_type = first_cancel.msg_type;
-        assert_eq!(first_cancel_msg_type, ClientResponseType::CancelRejected as u8);
+        assert_eq!(first_cancel_msg_type, ClientResponseType::Canceled as u8);
 
-        // Try to cancel again - also rejected
-        let (second_cancel, updates) = engine.process_request(&cancel_request);
+        // First cancel should generate a market update
+        assert_eq!(first_updates.len(), 1);
+        let upd_msg_type = first_updates[0].msg_type;
+        assert_eq!(upd_msg_type, MarketUpdateType::Cancel as u8);
+
+        // Second cancel should be rejected (order already canceled)
+        let (second_cancel, second_updates) = engine.process_request(&cancel_request);
         let second_cancel_msg_type = second_cancel.msg_type;
         assert_eq!(second_cancel_msg_type, ClientResponseType::CancelRejected as u8);
-        assert!(updates.is_empty());
+        assert!(second_updates.is_empty());
     }
 }
 

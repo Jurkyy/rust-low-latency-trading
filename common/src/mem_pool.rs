@@ -257,6 +257,45 @@ impl<T, const N: usize> MemPool<T, N> {
         // ptr is consumed here, preventing reuse
     }
 
+    /// Returns a slot to the pool by index.
+    ///
+    /// This is the index-based version of `deallocate()`, useful when you have
+    /// stored the index (e.g., in a hash map) rather than keeping the PoolPtr.
+    ///
+    /// # Safety
+    ///
+    /// - The index must refer to a currently allocated slot from this pool
+    /// - The index must not have been previously deallocated (no double-free)
+    /// - After deallocation, any references obtained via get_by_index are invalidated
+    /// - The caller must ensure they have exclusive access to the slot
+    ///
+    /// # Performance
+    ///
+    /// O(1) - simply pushes to the free list stack.
+    ///
+    /// # Note
+    ///
+    /// This does NOT drop the value at the slot. If T requires cleanup,
+    /// the caller must explicitly drop it before deallocating.
+    #[inline]
+    pub unsafe fn deallocate_by_index(&self, index: usize) {
+        debug_assert!(index < N, "index out of bounds - wrong pool?");
+
+        // SAFETY: Single-threaded access is required by the type's contract.
+        // Caller guarantees the index refers to an allocated slot.
+        let free_count = &mut *self.free_count.get();
+        let free_list = &mut *self.free_list.get();
+
+        debug_assert!(
+            *free_count < N,
+            "Double-free detected: pool already has all slots free"
+        );
+
+        // Push index back onto free list stack
+        free_list[*free_count] = index;
+        *free_count += 1;
+    }
+
     /// Returns a shared reference to the object at the given slot.
     ///
     /// # Safety

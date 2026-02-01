@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 /// An order in the order book.
 /// Uses indices for doubly-linked list links to avoid PoolPtr ownership issues.
+#[derive(Clone)]
 pub struct Order {
     pub order_id: OrderId,
     pub client_id: ClientId,
@@ -217,19 +218,75 @@ impl OrderBook {
     ///
     /// Returns the removed Order, or None if the order doesn't exist
     pub fn cancel_order(&mut self, order_id: OrderId) -> Option<Order> {
-        // Remove from orders map
+        // Step 1: Look up the order in order_map to get the pool index
         let idx_info = self.order_map.remove(&order_id)?;
         let pool_idx = idx_info.pool_idx;
 
-        // We need a way to get the order from the pool by index
-        // This requires iterating through order_map to find a valid PoolPtr
-        // then using unsafe offset arithmetic, which is fragile.
+        // Step 2: Get the order data from the pool
+        // SAFETY: The index is valid because it came from order_map, which only
+        // contains indices of allocated slots. Single-threaded access is guaranteed.
+        let order = self.order_pool.get_by_index(pool_idx)?;
 
-        // Better approach: keep the PoolPtr in the order_map instead
-        // But PoolPtr doesn't implement Clone.
+        // Step 3: Clone the order data for return value (before we modify anything)
+        let order_clone = order.clone();
+        let prev_idx = order.prev_idx;
+        let next_idx = order.next_idx;
+        let order_side = order.side;
+        let order_price = order.price;
+        let order_qty = order.qty;
 
-        // Let's redesign: store order data directly in a Vec and use indices
-        None
+        // Step 4: Get the appropriate price level HashMap based on order side
+        let levels = match order_side {
+            Side::Buy => &mut self.bid_levels,
+            Side::Sell => &mut self.ask_levels,
+        };
+
+        // Step 5: Get the mutable price level for the order's price
+        // The price level must exist since the order exists
+        let level = levels.get_mut(&order_price)?;
+
+        // Step 6: Update the doubly-linked list
+        // Update prev order's next_idx to point to our next
+        if let Some(prev) = prev_idx {
+            // SAFETY: The index is valid because it's stored in a valid order's prev_idx
+            if let Some(prev_order) = self.order_pool.get_by_index(prev) {
+                prev_order.next_idx = next_idx;
+            }
+        } else {
+            // We are the head - update price level's head_idx
+            level.head_idx = next_idx;
+        }
+
+        // Update next order's prev_idx to point to our prev
+        if let Some(next) = next_idx {
+            // SAFETY: The index is valid because it's stored in a valid order's next_idx
+            if let Some(next_order) = self.order_pool.get_by_index(next) {
+                next_order.prev_idx = prev_idx;
+            }
+        } else {
+            // We are the tail - update price level's tail_idx
+            level.tail_idx = prev_idx;
+        }
+
+        // Step 7: Update price level stats
+        level.order_count -= 1;
+        level.total_qty -= order_qty;
+
+        // Step 8: If price level is empty, remove it from the HashMap
+        if level.order_count == 0 {
+            levels.remove(&order_price);
+        }
+
+        // Step 9: Deallocate the pool slot
+        // SAFETY: The index is valid because it came from order_map, which only
+        // contains indices of allocated slots. We've already removed it from order_map,
+        // ensuring no double-free. Single-threaded access is guaranteed.
+        unsafe {
+            self.order_pool.deallocate_by_index(pool_idx);
+        }
+
+        // Step 10: Return the order
+        Some(order_clone)
     }
 
     /// Returns a reference to an order by its order ID

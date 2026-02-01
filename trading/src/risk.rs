@@ -127,13 +127,27 @@ impl RiskManager {
         }
 
         // Check 2: Position limit (including pending orders)
-        let projected_position = match side {
-            Side::Buy => position.max_long_exposure() + qty as i64,
-            Side::Sell => position.max_short_exposure() - qty as i64,
+        //
+        // Risk-reducing orders should always be allowed:
+        // - Selling when long reduces risk
+        // - Buying when short reduces risk
+        //
+        // We only enforce position limits on risk-increasing orders.
+        let current_position = position.position;
+        let is_risk_reducing = match side {
+            Side::Buy => current_position < 0, // Buying when short
+            Side::Sell => current_position > 0, // Selling when long
         };
 
-        if projected_position.abs() > limits.max_position {
-            return RiskCheckResult::PositionTooLarge;
+        if !is_risk_reducing {
+            let projected_position = match side {
+                Side::Buy => position.max_long_exposure() + qty as i64,
+                Side::Sell => position.max_short_exposure() - qty as i64,
+            };
+
+            if projected_position.abs() > limits.max_position {
+                return RiskCheckResult::PositionTooLarge;
+            }
         }
 
         // Check 3: Loss limit

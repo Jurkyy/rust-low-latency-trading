@@ -84,19 +84,23 @@ pub struct OrderBook {
     ask_levels: HashMap<Price, PriceLevel>,
     /// Maps OrderId to pool index for O(1) lookup
     order_map: HashMap<OrderId, OrderIndex>,
-    order_pool: MemPool<Order, 65536>,
+    /// Memory pool for orders - boxed to avoid stack overflow
+    order_pool: Box<MemPool<Order, 65536>>,
     next_priority: Priority,
 }
 
 impl OrderBook {
     /// Creates a new order book for the given ticker
+    ///
+    /// Note: The memory pool is heap-allocated via `new_boxed()` to avoid
+    /// stack overflow since it's very large (~5.7MB for 65536 orders).
     pub fn new(ticker_id: TickerId) -> Self {
         Self {
             ticker_id,
             bid_levels: HashMap::new(),
             ask_levels: HashMap::new(),
             order_map: HashMap::new(),
-            order_pool: MemPool::new(),
+            order_pool: MemPool::new_boxed(),
             next_priority: 1,
         }
     }

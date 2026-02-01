@@ -93,6 +93,12 @@ impl<T, const N: usize> MemPool<T, N> {
     /// The storage is uninitialized - objects are only initialized
     /// when the user writes to an allocated slot.
     ///
+    /// # Warning
+    ///
+    /// For large pools (N > 1024), this may cause stack overflow because
+    /// the arrays are created on the stack before being returned. Use
+    /// `new_boxed()` instead for large pools.
+    ///
     /// # Panics
     ///
     /// Panics if N is 0 (a zero-capacity pool is not useful).
@@ -115,6 +121,53 @@ impl<T, const N: usize> MemPool<T, N> {
             }),
             free_list: UnsafeCell::new(free_list),
             free_count: UnsafeCell::new(N),
+        }
+    }
+
+    /// Creates a new memory pool directly on the heap, avoiding stack overflow
+    /// for large pools.
+    ///
+    /// This is the preferred way to create large pools (N > 1024).
+    ///
+    /// # Panics
+    ///
+    /// Panics if N is 0 (a zero-capacity pool is not useful).
+    pub fn new_boxed() -> Box<Self> {
+        assert!(N > 0, "MemPool capacity must be greater than 0");
+
+        // Use alloc API to allocate zeroed memory directly on heap
+        // This avoids any stack allocation of the large arrays
+        use std::alloc::{alloc_zeroed, Layout};
+
+        // SAFETY: Layout is valid for MemPool<T, N>
+        let layout = Layout::new::<Self>();
+        let ptr = unsafe { alloc_zeroed(layout) as *mut Self };
+
+        if ptr.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+
+        // SAFETY: We allocated valid memory and will initialize it properly.
+        // UnsafeCell has the same memory layout as its inner type, so zeroed
+        // memory is a valid representation. We just need to write the actual
+        // values we need (free_count and free_list indices).
+        unsafe {
+            // Write free_count value (N) directly into the UnsafeCell's inner value
+            // UnsafeCell<usize> has the same layout as usize
+            let free_count_inner = std::ptr::addr_of_mut!((*ptr).free_count) as *mut usize;
+            std::ptr::write(free_count_inner, N);
+
+            // Storage is zeroed which is fine - MaybeUninit doesn't require initialization
+            // The UnsafeCell wrapper is transparent in memory layout
+
+            // Initialize free_list with indices 0..N
+            // UnsafeCell<[usize; N]> has same layout as [usize; N]
+            let free_list_inner = std::ptr::addr_of_mut!((*ptr).free_list) as *mut [usize; N];
+            for i in 0..N {
+                (*free_list_inner)[i] = i;
+            }
+
+            Box::from_raw(ptr)
         }
     }
 

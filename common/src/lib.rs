@@ -7,3 +7,4 @@ pub mod net;
 
 // Re-export commonly used types at crate root for convenience
 pub use types::*;
+pub use net::*;

@@ -28,6 +28,7 @@ name = "exchange"
 version = "0.1.0"
 dependencies = [
  "common",
+ "zerocopy",
 ]
 
 [[package]]

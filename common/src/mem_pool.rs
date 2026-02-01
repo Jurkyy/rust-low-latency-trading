@@ -301,6 +301,70 @@ impl<T, const N: usize> MemPool<T, N> {
     pub const fn capacity(&self) -> usize {
         N
     }
+
+    /// Returns a mutable reference to the object at the given index.
+    ///
+    /// This method is useful when you have stored the index (e.g., in a hash map)
+    /// and need to access the object directly without a PoolPtr. This is common
+    /// in order book implementations where order IDs map to pool indices.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index into the pool's storage array
+    ///
+    /// # Returns
+    ///
+    /// `Some(&mut T)` if the index is within bounds, `None` otherwise.
+    ///
+    /// # Safety
+    ///
+    /// - The index must refer to an allocated slot (not a free slot)
+    /// - The slot must have been initialized (written to) before reading
+    /// - No other references (shared or mutable) to the same slot must exist
+    /// - This method uses interior mutability; single-threaded access is required
+    ///
+    /// # Note
+    ///
+    /// This method does NOT check whether the slot is currently allocated.
+    /// The caller must ensure the index refers to a valid, allocated slot.
+    /// Using an index for a free (deallocated) slot is undefined behavior.
+    #[inline]
+    pub fn get_by_index(&self, index: usize) -> Option<&mut T> {
+        if index >= N {
+            return None;
+        }
+
+        // SAFETY: Caller guarantees the slot at index is allocated, initialized,
+        // and no other references exist. Interior mutability is used intentionally
+        // for single-threaded performance.
+        unsafe {
+            let storage = &mut *self.storage.get();
+            Some(&mut *storage[index].as_mut_ptr())
+        }
+    }
+
+    /// Returns a mutable reference to the object at the given index without bounds checking.
+    ///
+    /// This is the unchecked version of `get_by_index` for maximum performance
+    /// in hot paths where the index is known to be valid.
+    ///
+    /// # Safety
+    ///
+    /// - The index must be less than N (the pool capacity)
+    /// - The index must refer to an allocated slot (not a free slot)
+    /// - The slot must have been initialized (written to) before reading
+    /// - No other references (shared or mutable) to the same slot must exist
+    /// - Single-threaded access is required (interior mutability)
+    ///
+    /// Violating any of these conditions results in undefined behavior.
+    #[inline]
+    pub unsafe fn get_by_index_unchecked(&self, index: usize) -> &mut T {
+        debug_assert!(index < N, "index out of bounds");
+
+        // SAFETY: Caller guarantees all safety requirements are met
+        let storage = &mut *self.storage.get();
+        &mut *storage[index].as_mut_ptr()
+    }
 }
 
 impl<T, const N: usize> Default for MemPool<T, N> {
@@ -511,5 +575,61 @@ mod tests {
     #[should_panic(expected = "capacity must be greater than 0")]
     fn test_zero_capacity_panics() {
         let _pool: MemPool<u8, 0> = MemPool::new();
+    }
+
+    #[test]
+    fn test_get_by_index() {
+        let pool: MemPool<u64, 4> = MemPool::new();
+
+        // Allocate a slot and remember the index
+        let ptr = pool.allocate().expect("should allocate");
+        let index = ptr.index();
+
+        // Write via the normal method
+        *pool.get_mut(&ptr) = 42;
+
+        // Access by index
+        let value = pool.get_by_index(index).expect("should get by index");
+        assert_eq!(*value, 42);
+
+        // Modify by index
+        *value = 100;
+
+        // Verify the change is visible via PoolPtr
+        assert_eq!(*pool.get(&ptr), 100);
+
+        // Out of bounds should return None
+        assert!(pool.get_by_index(100).is_none());
+
+        pool.deallocate(ptr);
+    }
+
+    #[test]
+    fn test_get_by_index_unchecked() {
+        let pool: MemPool<u64, 4> = MemPool::new();
+
+        // Allocate multiple slots
+        let ptr1 = pool.allocate().expect("should allocate");
+        let ptr2 = pool.allocate().expect("should allocate");
+        let idx1 = ptr1.index();
+        let idx2 = ptr2.index();
+
+        *pool.get_mut(&ptr1) = 111;
+        *pool.get_mut(&ptr2) = 222;
+
+        // Access via unchecked method
+        unsafe {
+            assert_eq!(*pool.get_by_index_unchecked(idx1), 111);
+            assert_eq!(*pool.get_by_index_unchecked(idx2), 222);
+
+            // Modify via unchecked method
+            *pool.get_by_index_unchecked(idx1) = 333;
+        }
+
+        // Verify the change
+        assert_eq!(*pool.get(&ptr1), 333);
+
+        pool.deallocate(ptr1);
+        pool.deallocate(ptr2);
     }
 }

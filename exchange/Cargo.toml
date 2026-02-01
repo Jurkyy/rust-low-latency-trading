@@ -3,6 +3,16 @@ name = "exchange"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "exchange"
+path = "src/main.rs"
+
+[lib]
+name = "exchange"
+path = "src/lib.rs"
+
 [dependencies]
 common = { path = "../common" }
 zerocopy = { version = "0.7", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"

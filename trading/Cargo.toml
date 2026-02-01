@@ -3,6 +3,16 @@ name = "trading"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "trading"
+path = "src/main.rs"
+
+[lib]
+name = "trading"
+path = "src/lib.rs"
+
 [dependencies]
 common = { path = "../common" }
 exchange = { path = "../exchange" }
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"

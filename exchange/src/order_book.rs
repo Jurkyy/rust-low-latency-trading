@@ -171,7 +171,7 @@ impl OrderBook {
                 if idx_info.pool_idx == tail_idx {
                     // We need to get a mutable reference to update the next pointer
                     // This is safe because we're using indices
-                    let tail_order = unsafe {
+                    let _tail_order = unsafe {
                         &mut *(self.order_pool.get(&ptr) as *const Order as *mut Order)
                             .offset((tail_idx as isize) - (new_idx as isize))
                     };
@@ -291,7 +291,7 @@ impl OrderBook {
 
     /// Returns a reference to an order by its order ID
     #[inline]
-    pub fn get_order(&self, order_id: OrderId) -> Option<&Order> {
+    pub fn get_order(&self, _order_id: OrderId) -> Option<&Order> {
         // We need a PoolPtr to call order_pool.get()
         // Since we only store indices, we can't easily get the order
         None
@@ -310,10 +310,11 @@ impl OrderBook {
     /// Matches an incoming order against the book
     pub fn match_order(
         &mut self,
-        side: Side,
-        price: Price,
-        qty: Qty,
+        _side: Side,
+        _price: Price,
+        _qty: Qty,
     ) -> Vec<(OrderId, Qty, Price)> {
+        // TODO: Implement order matching logic
         Vec::new()
     }
 
